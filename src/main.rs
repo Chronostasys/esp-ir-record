@@ -1,3 +1,6 @@
+use esp_idf_hal::gpio::{Level, PinDriver};
+use esp_idf_hal::rmt::{PinState, Pulse, RxRmtDriver};
+use esp_idf_hal::rmt::config::{CarrierConfig, ReceiveConfig};
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::delay::FreeRtos;
 use esp_idf_svc::hal::rmt::{config::TransmitConfig, TxRmtDriver};
@@ -40,76 +43,71 @@ fn main() {
     // 确保所有LED初始状态为关闭
     log::info!("初始化LED状态 - 确保所有LED关闭");
     led.set_color(RgbColor::black()).unwrap();
-    FreeRtos::delay_ms(1000);
     
-    // 测试WS2812 LED颜色控制
-    log::info!("测试WS2812 LED颜色控制...");
-    log::info!("使用RMT驱动，GPIO48引脚");
+
+    // 红外接收配置
+    let ir_recv_pin = peripherals.pins.gpio21;
+
+
     
-    // 首先确保所有LED完全关闭
-    log::info!("确保所有LED完全关闭");
-    led.set_color(RgbColor::black()).unwrap();
-    FreeRtos::delay_ms(2000);
+    let receive_config = ReceiveConfig::new()
+        .idle_threshold(10000u16);  // 空闲阈值 - 10ms空闲后认为信号结束
+        // .carrier(Some(CarrierConfig::new().carrier_level(PinState::High)));
     
-    // 测试基本颜色
-    log::info!("测试红色");
-    led.set_color(RgbColor::red()).unwrap();
-    FreeRtos::delay_ms(2000);
+    const STACK_SIZE: usize = 250;
+    // 创建RMT接收驱动
+    let mut ir_receiver = RxRmtDriver::new(
+        peripherals.rmt.channel4,
+        ir_recv_pin,
+        &receive_config,
+        STACK_SIZE,  // 缓冲区大小
+    ).unwrap();
     
-    log::info!("测试绿色");
-    led.set_color(RgbColor::green()).unwrap();
-    FreeRtos::delay_ms(2000);
+    log::info!("红外接收器初始化完成，开始监听...");
+    log::info!("IR接收器引脚: GPIO44");
+    log::info!("RMT通道: Channel4");
+    log::info!("时钟分频: 80, 空闲阈值: 10000, 滤波器: 启用");
     
-    log::info!("测试蓝色");
-    led.set_color(RgbColor::blue()).unwrap();
-    FreeRtos::delay_ms(2000);
+    // 启动RMT接收
+    ir_receiver.start().unwrap();
+    log::info!("RMT接收已启动");
     
-    // 测试渐变效果
-    log::info!("测试渐变效果 - 从红色到蓝色");
-    led.fade_to(RgbColor::blue(), 3000, 30).unwrap();
-    FreeRtos::delay_ms(1000);
-    
-    log::info!("测试渐变效果 - 从蓝色到绿色");
-    led.fade_to(RgbColor::green(), 3000, 30).unwrap();
-    FreeRtos::delay_ms(1000);
-    
-    // 测试呼吸灯效果
-    log::info!("测试呼吸灯效果");
-    led.breathing(RgbColor::red(), 2).unwrap();
-    FreeRtos::delay_ms(1000);
-    
-    // 测试闪烁效果
-    log::info!("测试闪烁效果");
-    led.blink(RgbColor::blue(), 5, 200, 200).unwrap();
-    FreeRtos::delay_ms(1000);
-    
-    // 最终关闭所有LED
-    log::info!("最终关闭所有LED");
-    led.set_color(RgbColor::black()).unwrap();
-    FreeRtos::delay_ms(2000);
-    
-    log::info!("RGB LED 初始化完成，开始主循环");
-    FreeRtos::delay_ms(2000);
-    
-    // 主循环 - 演示LED控制
-    let mut color_index = 0;
-    let colors = [
-        RgbColor::red(),
-        RgbColor::green(),
-        RgbColor::blue(),
-        RgbColor::new(255, 255, 0),  // 黄色
-        RgbColor::new(255, 0, 255),  // 洋红色
-        RgbColor::new(0, 255, 255),  // 青色
-        RgbColor::black(),           // 关闭
-    ];
-    
+    // 主循环 - 持续监听红外信号
     loop {
-        let target_color = colors[color_index];
+        // 准备接收缓冲区 - 使用正确的初始化
+        let mut pulses = [(
+            Pulse::zero(), Pulse::zero()
+        ); STACK_SIZE];
         
-        log::info!("渐变到颜色: {:?}", target_color);
-        led.fade_to(target_color, 2000, 20).unwrap();
-        
-        color_index = (color_index + 1) % colors.len();
-    }
+        // 等待红外信号 (1000 ticks = 约1秒，假设tick rate为1000Hz)
+        match ir_receiver.receive(&mut pulses, 1000) {
+            Ok(received_count) => {
+                match received_count {
+                    esp_idf_hal::rmt::Receive::Read(count) => {
+                        log::info!("接收到红外信号，脉冲数量: {}", count);
+                        let pulses = &pulses[..count];
+
+                        for (pulse0, pulse1) in pulses {
+                            log::info!("0={pulse0:?}, 1={pulse1:?}");
+                        }
     
+
+                    }
+                    esp_idf_hal::rmt::Receive::Overflow(count) => {
+                        log::warn!("接收缓冲区溢出，脉冲数量: {}", count);
+                    }
+                    esp_idf_hal::rmt::Receive::Timeout => {
+                        log::info!("接收超时");
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("RMT接收错误: {:?}", e);
+            }
+        }
+        
+        // 短暂延时
+        FreeRtos::delay_ms(1000);
+    }
 }
+
