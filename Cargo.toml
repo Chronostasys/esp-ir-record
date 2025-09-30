@@ -18,14 +18,16 @@ debug = true    # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
 
 [features]
-default = []
+default = ["experimental"]
 
 experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
 log = "0.4"
-esp-idf-svc = { version = "0.51", features = ["binstart"] }
+esp-idf-svc = { version = "0.51", features = ["binstart", "alloc", "experimental"] }
 esp-idf-hal = { version = "0.45.2", features = ["rmt-legacy"] }
+heapless = "0.8"
+enumset = "1.1"
 
 # --- Optional Embassy Integration ---
 # esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
